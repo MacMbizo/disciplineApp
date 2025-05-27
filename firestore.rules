@@ -1,0 +1,74 @@
+// Firestore Security Rules for Midlands Christian College Discipline App
+// Implements role-based access control for all collections
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions for role-based access control
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isPrincipal() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'principal';
+    }
+    
+    function isTeacher() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+    
+    function isUserInSameSchool(schoolId) {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId == schoolId;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own data
+      // Admins and principals can read all user data
+      // Only admins can write to user data
+      allow read: if isOwner(userId) || isAdmin() || isPrincipal();
+      allow write: if isAdmin() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'schoolId']));
+    }
+    
+    // Incidents collection
+    match /incidents/{incidentId} {
+      // Teachers can create incidents and read their own incidents
+      // Admins and principals can read and update all incidents
+      // Teachers can only update incidents they created
+      allow create: if isTeacher() || isAdmin() || isPrincipal();
+      allow read: if isAdmin() || isPrincipal() || 
+        (isTeacher() && (resource.data.teacherId == request.auth.uid || isUserInSameSchool(resource.data.schoolId)));
+      allow update: if isAdmin() || isPrincipal() || 
+        (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow delete: if isAdmin() || isPrincipal();
+    }
+    
+    // Schools collection
+    match /schools/{schoolId} {
+      // Only admins can write to schools
+      // Users in the same school can read school data
+      allow read: if isAuthenticated() && (isAdmin() || isUserInSameSchool(schoolId));
+      allow write: if isAdmin();
+    }
+    
+    // Students collection
+    match /students/{studentId} {
+      // Teachers can read students in their school
+      // Admins and principals can read and write all students
+      // Teachers cannot modify student data
+      allow read: if isAdmin() || isPrincipal() || (isTeacher() && isUserInSameSchool(resource.data.schoolId));
+      allow write: if isAdmin() || isPrincipal();
+    }
+  }
+}
